@@ -28,6 +28,7 @@ package iterator
 
 import (
 	"strconv"
+	"strings"
 
 	"github.com/google/cayley/graph"
 )
@@ -39,7 +40,16 @@ const (
 	compareLTE
 	compareGT
 	compareGTE
-	// Why no Equals? Because that's usually an AndIterator.
+	compareE
+	compareNE
+	compareIN
+	compareNIN
+	compareIE // ignore case equal
+	compareINE
+	compareIIN
+	compareININ
+	compareCON // contains
+	compareNCON
 )
 
 type Comparison struct {
@@ -70,7 +80,9 @@ func (it *Comparison) UID() uint64 {
 // Here's the non-boilerplate part of the ValueComparison iterator. Given a value
 // and our operator, determine whether or not we meet the requirement.
 func (it *Comparison) doComparison(val graph.Value) bool {
-	nodeStr := it.qs.NameOf(val)
+	tID := it.qs.QuadDirection(val, it.subIt.Describe().Direction)
+	nodeStr := it.qs.NameOf(tID)
+	//nodeStr := it.qs.NameOf(val)
 	switch cVal := it.val.(type) {
 	case int:
 		cInt := int64(cVal)
@@ -87,8 +99,16 @@ func (it *Comparison) doComparison(val graph.Value) bool {
 		return RunIntOp(intVal, it.op, cVal)
 	case string:
 		return RunStrOp(nodeStr, it.op, cVal)
+	case []int64:
+		intVal, err := strconv.ParseInt(nodeStr, 10, 64)
+		if err != nil {
+			return false
+		}
+		return RunIntArrOp(intVal, it.op, cVal)
+	case []string:
+		return RunStrArrOp(nodeStr, it.op, cVal)
 	default:
-		return true
+		return false
 	}
 }
 
@@ -106,6 +126,26 @@ func RunIntOp(a int64, op Operator, b int64) bool {
 		return a > b
 	case compareGTE:
 		return a >= b
+	case compareE:
+		return a == b
+	case compareNE:
+		return a != b
+	default:
+		panic("Unknown operator type")
+	}
+}
+
+func RunIntArrOp(a int64, op Operator, b []int64) bool {
+	switch op {
+	case compareIN:
+		for _, val := range b {
+			if a == val {
+				return true
+			}
+		}
+		return false
+	case compareNIN:
+		return RunIntArrOp(a, compareIN, b)
 	default:
 		panic("Unknown operator type")
 	}
@@ -121,6 +161,52 @@ func RunStrOp(a string, op Operator, b string) bool {
 		return a > b
 	case compareGTE:
 		return a >= b
+	case compareE:
+		return a == b
+	case compareNE:
+		return a != b
+	case compareIE:
+		return strings.EqualFold(a, b)
+	case compareINE:
+		return !strings.EqualFold(a, b)
+	case compareCON:
+		return strings.Contains(a, b)
+	case compareNCON:
+		return !strings.Contains(a, b)
+	default:
+		panic("Unknown operator type")
+	}
+}
+
+func RunStrArrOp(a string, op Operator, b []string) bool {
+	switch op {
+	case compareIN:
+		for _, val := range b {
+			if a == val {
+				return true
+			}
+		}
+		return false
+	case compareNIN:
+		return !RunStrArrOp(a, compareIN, b)
+	case compareIIN:
+		for _, val := range b {
+			if strings.EqualFold(a, val) {
+				return true
+			}
+		}
+		return false
+	case compareININ:
+		return !RunStrArrOp(a, compareIIN, b)
+	case compareCON:
+		for _, val := range b {
+			if strings.Contains(a, val) {
+				return true
+			}
+		}
+		return false
+	case compareNCON:
+		return RunStrArrOp(a, compareCON, b)
 	default:
 		panic("Unknown operator type")
 	}
