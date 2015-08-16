@@ -34,6 +34,73 @@ func propertiesOf(obj *otto.Object, name string) []string {
 	return export.([]string)
 }
 
+// get a property as an array of values
+func propertyAsArray(obj *otto.Object, name string) []otto.Value {
+	valuesList, err := obj.Get(name)
+	if err != nil {
+		return nil
+	}
+	goValuesList, exerr := valuesList.Export()
+	if exerr != nil {
+		return nil
+	}
+	return goValuesList.([]otto.Value)
+}
+
+// convert an otto array of js values into an
+// array of go strings, single values are converted into
+// an array with a single element
+func convertOttoObjToStrArray(val otto.Value) []string {
+	var strarr []string
+	if val.IsString() {
+		strarr = append(strarr, val.String())
+	} else {
+		if val.Class() == "Array" {
+			nativeVal, err := val.Export()
+			if err != nil {
+				glog.Errorln("Failed to export JS object.")
+				return nil
+			}
+			for _, predicate := range nativeVal.([]interface{}) {
+				switch v := predicate.(type) {
+				case string:
+					strarr = append(strarr, v)
+				default:
+					return nil
+				}
+			}
+		}
+	}
+	return strarr
+}
+
+func convertOttoObjToIntArray(val otto.Value) ([]int64, bool) {
+	var strarr []int64
+	if val.IsNumber() {
+		i, _ := val.ToInteger()
+		strarr = append(strarr, i)
+	} else {
+		if val.Class() == "Array" {
+			nativeVal, err := val.Export()
+			if err != nil {
+				glog.Errorln("Failed to export JS object.")
+				return nil, false
+			}
+			for _, predicate := range nativeVal.([]interface{}) {
+				switch v := predicate.(type) {
+				case int64:
+					strarr = append(strarr, v)
+				default:
+					return nil, false
+				}
+			}
+		} else {
+			return nil, false
+		}
+	}
+	return strarr, true
+}
+
 func buildIteratorTree(obj *otto.Object, qs graph.QuadStore) graph.Iterator {
 	if !isVertexChain(obj) {
 		return iterator.NewNull()
@@ -221,23 +288,74 @@ func buildIteratorTreeHelper(obj *otto.Object, qs graph.QuadStore, base graph.It
 		and.AddSubIterator(subIt)
 		it = and
 	case "has":
-		fixed := qs.FixedIterator()
-		if len(stringArgs) < 2 {
-			return iterator.NewNull()
+		args := propertyAsArray(obj, "_gremlin_values")
+		argCount := len(args)
+
+		if argCount < 2 || argCount > 3 {
+			return iterator.NewNull() //TODO throw JS invalid args error
 		}
-		for _, name := range stringArgs[1:] {
-			fixed.Add(qs.ValueOf(name))
+
+		if argCount == 3 { // Has(<predicate>, <operator>, <comparison_value>)
+			// iterator.Operator must be an integer
+			if !args[1].IsNumber() {
+				return iterator.NewNull() //TODO here be useuful error message
+			}
+			if !args[2].IsNumber() && !args[2].IsString() && args[2].Class() != "Array" {
+				return iterator.NewNull()
+			}
+			predFixed := qs.FixedIterator()
+			for _, name := range convertOttoObjToStrArray(args[0]) {
+				predFixed.Add(qs.ValueOf(name))
+			}
+			var value graph.Value = args[2].String()
+			var operator iterator.Operator
+
+			val, _ := args[1].ToInteger()
+			operator = iterator.Operator(val)
+
+			if args[2].Class() == "Array" {
+				if v, ok := convertOttoObjToIntArray(args[2]); ok {
+					value = v
+				} else {
+					value = convertOttoObjToStrArray(args[2])
+				}
+			} else {
+				if args[2].IsNumber() {
+					val, _ := args[2].ToInteger()
+					value = val
+				}
+				if args[2].IsString() {
+					val, _ := args[2].ToString()
+					value = val
+				}
+			}
+			subAnd := iterator.NewAnd(qs)
+			subAnd.AddSubIterator(iterator.NewLinksTo(qs, predFixed, quad.Predicate))
+			allObjs := iterator.NewLinksTo(qs, qs.NodesAllIterator(), quad.Object)
+			subAnd.AddSubIterator(iterator.NewComparison(allObjs, operator, value, qs))
+			hasa := iterator.NewHasA(qs, subAnd, quad.Subject)
+			and := iterator.NewAnd(qs)
+			and.AddSubIterator(hasa)
+			and.AddSubIterator(subIt)
+			it = and
+		} else { // Has(<predicate>, <object>)
+			predFixed := qs.FixedIterator()
+			for _, name := range convertOttoObjToStrArray(args[0]) {
+				predFixed.Add(qs.ValueOf(name))
+			}
+			objfixed := qs.FixedIterator()
+			for _, name := range convertOttoObjToStrArray(args[1]) {
+				objfixed.Add(qs.ValueOf(name))
+			}
+			subAnd := iterator.NewAnd(qs)
+			subAnd.AddSubIterator(iterator.NewLinksTo(qs, predFixed, quad.Predicate))
+			subAnd.AddSubIterator(iterator.NewLinksTo(qs, objfixed, quad.Object))
+			hasa := iterator.NewHasA(qs, subAnd, quad.Subject)
+			and := iterator.NewAnd(qs)
+			and.AddSubIterator(hasa)
+			and.AddSubIterator(subIt)
+			it = and
 		}
-		predFixed := qs.FixedIterator()
-		predFixed.Add(qs.ValueOf(stringArgs[0]))
-		subAnd := iterator.NewAnd(qs)
-		subAnd.AddSubIterator(iterator.NewLinksTo(qs, predFixed, quad.Predicate))
-		subAnd.AddSubIterator(iterator.NewLinksTo(qs, fixed, quad.Object))
-		hasa := iterator.NewHasA(qs, subAnd, quad.Subject)
-		and := iterator.NewAnd(qs)
-		and.AddSubIterator(hasa)
-		and.AddSubIterator(subIt)
-		it = and
 	case "morphism":
 		it = base
 	case "and":
