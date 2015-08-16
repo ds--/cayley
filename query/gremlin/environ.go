@@ -100,7 +100,10 @@ func argsOf(call otto.FunctionCall) []string {
 		if arg.IsObject() && arg.Class() == "Array" {
 			obj, _ := arg.Export()
 			for _, x := range obj.([]interface{}) {
+				switch x.(type) {
+				case string:
 				out = append(out, x.(string))
+				}
 			}
 		}
 	}
