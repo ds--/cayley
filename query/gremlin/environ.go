@@ -84,6 +84,29 @@ func newWorker(qs graph.QuadStore) *worker {
 		return otto.NullValue()
 	})
 
+	env.Object(`T = {
+		lt		: 0,
+		lte		: 1,
+		gt		: 2,
+		gte		: 3,
+		eq		: 4,
+		neq		: 5,
+		in		: 6,
+		notin	: 7,		
+		Text	: {	// text-specific operations
+			ieq			: 8, // case insensitive
+			ineq		: 9,
+			iin			: 10,
+			inin		: 11,
+			
+			//TODO ...
+			contains	: 12,	// contains
+			ncontains	: 13,
+			icontains	: 14,
+			incontains	: 15
+		}
+	}`)
+
 	return wk
 }
 
@@ -102,7 +125,7 @@ func argsOf(call otto.FunctionCall) []string {
 			for _, x := range obj.([]interface{}) {
 				switch x.(type) {
 				case string:
-				out = append(out, x.(string))
+					out = append(out, x.(string))
 				}
 			}
 		}
