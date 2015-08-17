@@ -98,12 +98,8 @@ func newWorker(qs graph.QuadStore) *worker {
 			ineq		: 9,
 			iin			: 10,
 			inin		: 11,
-			
-			//TODO ...
 			contains	: 12,	// contains
 			ncontains	: 13,
-			icontains	: 14,
-			incontains	: 15
 		}
 	}`)
 
